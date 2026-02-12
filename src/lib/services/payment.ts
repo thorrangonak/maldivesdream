@@ -5,9 +5,11 @@ import { logger } from "@/lib/utils/logger";
 
 // ─── Stripe ──────────────────────────────────────────────────────────────────
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-  apiVersion: "2026-01-28.clover",
-});
+function getStripe() {
+  return new Stripe(process.env.STRIPE_SECRET_KEY!, {
+    apiVersion: "2026-01-28.clover",
+  });
+}
 
 /**
  * Create a Stripe Checkout session for a reservation.
@@ -22,7 +24,7 @@ export async function createStripeSession(reservationId: string) {
     throw new Error("Reservation is not in PENDING status");
   }
 
-  const session = await stripe.checkout.sessions.create({
+  const session = await getStripe().checkout.sessions.create({
     payment_method_types: ["card"],
     mode: "payment",
     line_items: [
@@ -69,7 +71,7 @@ export async function createStripeSession(reservationId: string) {
  * Handle Stripe webhook events.
  */
 export async function handleStripeWebhook(payload: string, signature: string) {
-  const event = stripe.webhooks.constructEvent(
+  const event = getStripe().webhooks.constructEvent(
     payload,
     signature,
     process.env.STRIPE_WEBHOOK_SECRET!
@@ -125,10 +127,10 @@ export async function refundStripePayment(reservationId: string) {
   if (!payment) throw new Error("No completed Stripe payment found");
 
   // The providerTxId is the checkout session ID; we need the payment intent
-  const session = await stripe.checkout.sessions.retrieve(payment.providerTxId!);
+  const session = await getStripe().checkout.sessions.retrieve(payment.providerTxId!);
   if (!session.payment_intent) throw new Error("No payment intent on session");
 
-  const refund = await stripe.refunds.create({
+  const refund = await getStripe().refunds.create({
     payment_intent: session.payment_intent as string,
   });
 
