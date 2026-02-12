@@ -4,7 +4,8 @@ import pg from "pg";
 import bcrypt from "bcryptjs";
 
 const connectionString = process.env.DATABASE_URL || "postgresql://postgres:postgres@localhost:5434/maldives_dream?schema=public";
-const pool = new pg.Pool({ connectionString });
+const isSSL = connectionString.includes("sslmode=require") || connectionString.includes(".neon.tech");
+const pool = new pg.Pool({ connectionString, ...(isSSL && { ssl: { rejectUnauthorized: false } }) });
 const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
 
