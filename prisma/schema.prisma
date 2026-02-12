@@ -1,0 +1,296 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../node_modules/.prisma/client"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Users & Auth ────────────────────────────────────────────────────────────
+
+enum UserRole {
+  SUPER_ADMIN
+  ADMIN
+  STAFF
+}
+
+model User {
+  id           String     @id @default(cuid())
+  email        String     @unique
+  passwordHash String
+  name         String
+  role         UserRole   @default(STAFF)
+  active       Boolean    @default(true)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  auditLogs    AuditLog[]
+
+  @@index([email])
+  @@map("users")
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id])
+  action     String   // e.g. "reservation.cancel", "hotel.update"
+  entityType String   // e.g. "Reservation", "Hotel"
+  entityId   String
+  before     Json?    // snapshot before change
+  after      Json?    // snapshot after change
+  ipAddress  String?
+  createdAt  DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([userId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+// ─── Hotels ──────────────────────────────────────────────────────────────────
+
+enum HotelStatus {
+  DRAFT
+  ACTIVE
+  INACTIVE
+}
+
+model Hotel {
+  id            String      @id @default(cuid())
+  name          String
+  slug          String      @unique
+  island        String      // e.g. "Maafushi"
+  atoll         String      // e.g. "Kaafu Atoll"
+  description   String      @db.Text
+  amenities     Json        // string[] stored as JSON
+  policies      Json?       // { cancellation, checkIn, checkOut, childPolicy, etc. }
+  checkInTime   String      @default("14:00") // HH:mm
+  checkOutTime  String      @default("12:00")
+  contactEmail  String?
+  contactPhone  String?
+  address       String?
+  latitude      Float?
+  longitude     Float?
+  starRating    Int?        @default(5) // 1-5
+  status        HotelStatus @default(DRAFT)
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  roomTypes    RoomType[]
+  photos       Photo[]
+  reservations Reservation[]
+
+  @@index([slug])
+  @@index([status])
+  @@index([atoll])
+  @@map("hotels")
+}
+
+// ─── Room Types ──────────────────────────────────────────────────────────────
+
+model RoomType {
+  id             String   @id @default(cuid())
+  hotelId        String
+  hotel          Hotel    @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+  name           String   // e.g. "Deluxe Water Villa"
+  slug           String
+  description    String   @db.Text
+  maxGuests      Int
+  bedType        String   // e.g. "King", "Twin", "King + Sofa"
+  baseFeatures   Json     // string[] - wifi, minibar, ocean view, etc.
+  inventoryCount Int      // total rooms of this type
+  sizeM2         Float?   // room size in m²
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  seasonalPrices SeasonalPrice[]
+  photos         Photo[]
+  reservations   Reservation[]
+  allotments     DailyAllotment[]
+
+  @@unique([hotelId, slug])
+  @@index([hotelId])
+  @@map("room_types")
+}
+
+// ─── Seasons & Pricing ──────────────────────────────────────────────────────
+
+model Season {
+  id        String   @id @default(cuid())
+  name      String   // e.g. "Peak Season 2025", "Green Season 2025"
+  startDate DateTime @db.Date
+  endDate   DateTime @db.Date
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  prices SeasonalPrice[]
+
+  @@index([startDate, endDate])
+  @@map("seasons")
+}
+
+model SeasonalPrice {
+  id           String    @id @default(cuid())
+  roomTypeId   String
+  roomType     RoomType  @relation(fields: [roomTypeId], references: [id], onDelete: Cascade)
+  seasonId     String
+  season       Season    @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  nightlyPrice Decimal   @db.Decimal(12, 2)
+  currency     String    @default("USD")
+  minNights    Int       @default(1)
+  promoRules   Json?     // { earlyBird: { daysBefore: 90, discountPct: 10 }, longStay: { nights: 7, discountPct: 15 } }
+  active       Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@unique([roomTypeId, seasonId])
+  @@index([roomTypeId])
+  @@index([seasonId])
+  @@map("seasonal_prices")
+}
+
+// ─── Availability (per-day allotment tracking) ──────────────────────────────
+
+model DailyAllotment {
+  id           String   @id @default(cuid())
+  roomTypeId   String
+  roomType     RoomType @relation(fields: [roomTypeId], references: [id], onDelete: Cascade)
+  date         DateTime @db.Date
+  totalRooms   Int      // usually = roomType.inventoryCount, but can be overridden
+  bookedRooms  Int      @default(0)
+  blockedRooms Int      @default(0) // maintenance, etc.
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([roomTypeId, date])
+  @@index([roomTypeId, date])
+  @@map("daily_allotments")
+}
+
+// ─── Photos ──────────────────────────────────────────────────────────────────
+
+model Photo {
+  id         String    @id @default(cuid())
+  hotelId    String?
+  hotel      Hotel?    @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+  roomTypeId String?
+  roomType   RoomType? @relation(fields: [roomTypeId], references: [id], onDelete: Cascade)
+  url        String    // S3/R2 URL
+  key        String    // S3 object key for deletion
+  altText    String?
+  sortOrder  Int       @default(0)
+  mimeType   String?
+  sizeBytes  Int?
+  createdAt  DateTime  @default(now())
+
+  @@index([hotelId])
+  @@index([roomTypeId])
+  @@map("photos")
+}
+
+// ─── Reservations ────────────────────────────────────────────────────────────
+
+enum ReservationStatus {
+  PENDING
+  CONFIRMED
+  CANCELLED
+  REFUNDED
+}
+
+model Reservation {
+  id              String            @id @default(cuid())
+  code            String            @unique @default(cuid()) // human-friendly lookup code
+  hotelId         String
+  hotel           Hotel             @relation(fields: [hotelId], references: [id])
+  roomTypeId      String
+  roomType        RoomType          @relation(fields: [roomTypeId], references: [id])
+  // Guest info (no account required)
+  guestFirstName  String
+  guestLastName   String
+  guestEmail      String
+  guestPhone      String?
+  guestCountry    String?
+  // Stay details
+  checkIn         DateTime          @db.Date
+  checkOut        DateTime          @db.Date
+  nights          Int
+  roomQty         Int               @default(1)
+  guestCount      Int
+  // Pricing snapshot (immutable after creation)
+  pricingBreakdown Json             // { nightlyRates: [{ date, price }], subtotal, taxes, fees, discount, total, currency }
+  totalAmount      Decimal          @db.Decimal(12, 2)
+  currency         String           @default("USD")
+  // Status
+  status          ReservationStatus @default(PENDING)
+  specialRequests String?           @db.Text
+  // Cancellation
+  cancelledAt     DateTime?
+  cancelReason    String?
+  // Timestamps
+  confirmedAt     DateTime?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  payments Payment[]
+
+  @@index([code])
+  @@index([guestEmail])
+  @@index([hotelId])
+  @@index([status])
+  @@index([checkIn, checkOut])
+  @@map("reservations")
+}
+
+// ─── Payments ────────────────────────────────────────────────────────────────
+
+enum PaymentProvider {
+  STRIPE
+  CRYPTO
+}
+
+enum PaymentStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  REFUNDED
+}
+
+model Payment {
+  id              String          @id @default(cuid())
+  reservationId   String
+  reservation     Reservation     @relation(fields: [reservationId], references: [id])
+  provider        PaymentProvider
+  amount          Decimal         @db.Decimal(12, 2)
+  currency        String          @default("USD")
+  status          PaymentStatus   @default(PENDING)
+  // Provider-specific
+  providerTxId    String?         // Stripe payment_intent / crypto tx hash
+  providerData    Json?           // full webhook payload for audit
+  checkoutUrl     String?         // redirect URL for customer
+  // Timestamps
+  completedAt     DateTime?
+  failedAt        DateTime?
+  refundedAt      DateTime?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  @@index([reservationId])
+  @@index([providerTxId])
+  @@index([status])
+  @@map("payments")
+}
+
+// ─── Settings (key-value store for app config) ──────────────────────────────
+
+model Setting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+  updatedBy String?
+
+  @@map("settings")
+}

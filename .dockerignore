@@ -1,0 +1,9 @@
+node_modules
+.next
+.git
+.env
+.env.local
+*.md
+docker-compose.yml
+.DS_Store
+tests
