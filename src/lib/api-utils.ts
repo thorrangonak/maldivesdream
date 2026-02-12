@@ -24,7 +24,7 @@ export function withErrorHandler(handler: RouteHandler): RouteHandler {
       if (error instanceof ZodError) {
         return err(error.issues.map((e) => `${e.path.join(".")}: ${e.message}`).join("; "), 400);
       }
-      const message = error instanceof Error ? error.message : "Internal server error";
+      const message = error instanceof Error ? error.message : String(error);
       if (message === "Unauthorized") return err(message, 401);
       if (message.startsWith("Forbidden")) return err(message, 403);
       logger.error("Unhandled API error", { error: message, path: req.url });
